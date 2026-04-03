@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "autoblock.fullname" . }}-config
+  labels: {{- include "autoblock.labels" . | nindent 4 }}
+data:
+  autoblock.yaml: |
+    tenant: {{ .Values.tenant | quote }}
+
+    redis:
+      url: {{ .Values.redis.url | quote }}
+      key_prefix: {{ .Values.redis.keyPrefix | quote }}
+      keyspace_notifications: {{ .Values.redis.keyspaceNotifications }}
+
+    remediation:
+      enabled: true
+      watcher_mode: {{ .Values.engine.remediation.watcherMode | quote }}
+      debounce_seconds: {{ .Values.engine.remediation.debounceSeconds }}
+      min_score_for_waf: {{ .Values.engine.remediation.minScoreForWaf }}
+      target_remediation_seconds: {{ .Values.engine.remediation.targetSeconds }}
+
+    waf:
+      providers:
+        {{- if .Values.waf.providers.aws.enabled }}
+        - name: aws_waf
+          enabled: true
+          type: aws_waf
+          config:
+            region: {{ .Values.waf.providers.aws.region | quote }}
+            ip_set_id: {{ .Values.waf.providers.aws.ipSetId | quote }}
+            ip_set_name: {{ .Values.waf.providers.aws.ipSetName | quote }}
+            scope: {{ .Values.waf.providers.aws.scope | quote }}
+        {{- end }}
+        {{- if .Values.waf.providers.cloudflare.enabled }}
+        - name: cloudflare
+          enabled: true
+          type: cloudflare
+          config:
+            account_id: {{ .Values.waf.providers.cloudflare.accountId | quote }}
+            list_id: {{ .Values.waf.providers.cloudflare.listId | quote }}
+        {{- end }}
+        {{- if .Values.waf.providers.nginx.enabled }}
+        - name: nginx
+          enabled: true
+          type: nginx
+          config:
+            ban_file_path: {{ .Values.waf.providers.nginx.banFilePath | quote }}
+            reload_command: {{ .Values.waf.providers.nginx.reloadCommand | quote }}
+        {{- end }}
+
+    notifications:
+      slack:
+        enabled: {{ .Values.notifications.slack.enabled }}
+        channel: {{ .Values.notifications.slack.channel | quote }}
+        max_per_minute: {{ .Values.notifications.slack.maxPerMinute }}
+
+    api:
+      listen: ":8080"
+      auth:
+        enabled: {{ .Values.auth.enabled }}
+
+    metrics:
+      prometheus:
+        enabled: {{ .Values.metrics.enabled }}
+        listen: ":{{ .Values.metrics.port }}"
+        path: {{ .Values.metrics.path | quote }}

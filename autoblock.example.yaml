@@ -1,0 +1,183 @@
+##
+## AutoBlock -- full configuration reference
+## Copy to autoblock.yaml and adjust for your environment.
+## Sensitive values: supply via environment variables (AUTOBLOCK_ prefix, dots -> underscores).
+## Example: AUTOBLOCK_WAF_PROVIDERS_0_CONFIG_API_TOKEN overrides waf.providers[0].config.api_token
+##
+
+tenant: acme
+
+redis:
+  url: redis://localhost:6379
+  key_prefix: ab
+  keyspace_notifications: true   # requires notify-keyspace-events KEA on the Redis server
+
+remediation:
+  enabled: true
+  watcher_mode: pubsub           # pubsub (realtime, default) | poll (fallback for managed Redis)
+  poll_interval_seconds: 5       # only used when watcher_mode: poll
+  debounce_seconds: 3            # wait this long before acting on a BLACKLIST state change
+  min_score_for_waf: 15          # penalty score must reach this before WAF push is triggered
+  target_remediation_seconds: 60 # SLO: WAF action should complete within this window (alerting only)
+  decay:
+    enabled: false               # set true to enable exponential score decay
+    half_life_minutes: 30        # score halves every N minutes of good behaviour
+    interval_seconds: 60         # how often the decay tick runs
+    # FSM thresholds must match the values used by SDK middlewares:
+    warn_threshold: 3
+    slow_threshold: 6
+    block_threshold: 10
+    blacklist_threshold: 15
+
+# ---------------------------------------------------------------------------
+# WAF providers
+#
+# All enabled providers receive every block/unblock command in parallel (fan-out).
+# A failure in one provider does not cancel the others.
+# ---------------------------------------------------------------------------
+waf:
+  providers:
+
+    # -- AWS WAF v2 ----------------------------------------------------------
+    # Maintains an IP Set; blocks at the CloudFront or ALB level.
+    - name: aws_waf
+      enabled: false
+      type: aws_waf
+      config:
+        region: us-east-1
+        ip_set_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+        ip_set_name: autoblock-blacklist
+        scope: REGIONAL            # REGIONAL (ALB/API GW) | CLOUDFRONT
+        # AWS credentials: use env vars AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY,
+        # or an EC2/ECS instance role, or IRSA (see deploy/helm/autoblock/values.yaml).
+
+    # -- Cloudflare Lists API ------------------------------------------------
+    # Adds IPs to a Cloudflare IP List; reference the list in a WAF custom rule.
+    - name: cloudflare
+      enabled: false
+      type: cloudflare
+      config:
+        account_id: ""             # Cloudflare account ID
+        list_id: ""                # ID of the IP list to populate
+        api_token: ""              # env: AUTOBLOCK_WAF_PROVIDERS_1_CONFIG_API_TOKEN
+        # Token scope: Account -> Account Filter Lists: Edit
+
+    # -- Nginx geo-module ban file -------------------------------------------
+    # Writes a geo-module include file; reloads Nginx after each change.
+    - name: nginx
+      enabled: false
+      type: nginx
+      config:
+        ban_file: /etc/nginx/conf.d/autoblock-ban.conf
+        reload_command: "nginx -s reload"
+        # Each blocked IP is written as:  1.2.3.4 1;
+        #
+        # Required Nginx config:
+        #   geo $is_banned {
+        #     default 0;
+        #     include /etc/nginx/conf.d/autoblock-ban.conf;
+        #   }
+        #   server {
+        #     if ($is_banned) { return 403; }
+        #   }
+
+# ---------------------------------------------------------------------------
+# Notifications
+#
+# Fires on every BLACKLIST event. Multiple notifiers can be enabled at once.
+# ---------------------------------------------------------------------------
+notifications:
+
+  # -- Slack Incoming Webhook ------------------------------------------------
+  slack:
+    enabled: false
+    webhook_url: ""              # env: AUTOBLOCK_NOTIFICATIONS_SLACK_WEBHOOK_URL
+    channel: "#security-alerts"
+    max_per_minute: 5            # rate-limit Slack messages to avoid noise
+
+  # -- PagerDuty Events API v2 -----------------------------------------------
+  # Creates a CRITICAL alert; dedup_key = "autoblock-{ip}" (24h window).
+  # Resolves automatically when the IP is removed from the blacklist.
+  pagerduty:
+    enabled: false
+    integration_key: ""          # env: AUTOBLOCK_NOTIFICATIONS_PAGERDUTY_INTEGRATION_KEY
+
+# ---------------------------------------------------------------------------
+# Management REST API (engine/cmd/api)
+# ---------------------------------------------------------------------------
+api:
+  listen: ":8080"
+  auth:
+    enabled: true
+    keys:
+      - key: ""                  # env: AUTOBLOCK_API_AUTH_KEYS_0_KEY
+        role: admin              # admin: full read + write
+      - key: ""                  # env: AUTOBLOCK_API_AUTH_KEYS_1_KEY
+        role: readonly           # readonly: GET only
+
+  # Endpoints:
+  #   GET    /api/v1/status/ip/{ip}     -- penalty state + score for an IP
+  #   GET    /api/v1/blacklist          -- list all blacklisted IPs
+  #   POST   /api/v1/blacklist/ip       -- manually add an IP  (body: {"ip":"...","ttl":3600})
+  #   DELETE /api/v1/blacklist/ip/{ip}  -- remove an IP from the blacklist
+  #   GET    /api/v1/whitelist          -- list all whitelisted IPs
+  #   POST   /api/v1/whitelist/ip       -- add an IP to the whitelist
+  #   DELETE /api/v1/whitelist/ip/{ip}  -- remove from whitelist
+  #   GET    /api/v1/audit?limit=50     -- recent audit events (from Redis Stream)
+  #   GET    /healthz                   -- liveness probe (no auth required)
+
+# ---------------------------------------------------------------------------
+# Observability
+# ---------------------------------------------------------------------------
+metrics:
+  prometheus:
+    enabled: true
+    listen: ":9090"
+    path: /metrics
+    # Key metrics:
+    #   autoblock_waf_actions_total{provider,action,success}
+    #   autoblock_waf_action_errors_total{provider,action}
+    #   autoblock_waf_action_latency_seconds{provider,action}   (histogram, p50/p95/p99)
+    #   autoblock_blacklist_total{tenant}
+    #   autoblock_events_processed_total{tenant,state}
+    #   autoblock_api_requests_total{method,path,status}
+
+# ---------------------------------------------------------------------------
+# SDK middleware (language-native config -- not read by this file)
+#
+#   TypeScript / Express:
+#     app.use(autoBlock({ tenant: 'acme', failOpen: true, rules: [
+#       { path: '/api/auth/login', limit: 10, windowSeconds: 60, algorithm: 'hybrid' },
+#     ]}))
+#
+#   Python / FastAPI:
+#     app.add_middleware(AutoBlockMiddleware,
+#       tenant='acme', fail_open=True,
+#       rules=[RuleConfig(path='/api/auth/login', limit=10, window_seconds=60)])
+#
+#   Java / Spring Boot  (application.yml):
+#     spring:
+#       threads:
+#         virtual:
+#           enabled: true
+#     autoblock:
+#       tenant: acme
+#       fail-open: true
+#       trust-proxy: true
+#       trust-proxy-depth: 1
+#       thresholds:
+#         warn: 3
+#         slow: 6
+#         block: 10
+#         blacklist: 15
+#       rules:
+#         - path: /api/auth/login
+#           limit: 10
+#           window-seconds: 60
+#           algorithm: HYBRID
+#           per-user: true
+#         - path: /api/**
+#           limit: 200
+#           window-seconds: 60
+#           algorithm: SLIDING_WINDOW
+# ---------------------------------------------------------------------------

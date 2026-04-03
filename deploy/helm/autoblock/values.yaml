@@ -1,0 +1,133 @@
+## Global settings
+tenant: default
+
+## Redis connection
+redis:
+  url: "redis://redis-master:6379"
+  keyPrefix: "ab"
+  keyspaceNotifications: true
+
+## Remediation engine
+engine:
+  enabled: true
+  replicaCount: 1   # singleton — stateless but only one needed
+  image:
+    repository: ghcr.io/autoblock/autoblock-engine
+    tag: ""         # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  remediation:
+    watcherMode: pubsub
+    debounceSeconds: 3
+    minScoreForWaf: 15
+    targetSeconds: 60
+
+## Management API
+api:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ghcr.io/autoblock/autoblock-api
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+## Authentication
+auth:
+  enabled: true
+  # Store API keys in a Kubernetes secret; reference by name
+  existingSecret: ""         # if set, reads keys from this secret
+  adminKey: ""               # set via --set auth.adminKey=... or in secret
+  readonlyKey: ""
+
+## WAF providers
+waf:
+  providers:
+    aws:
+      enabled: false
+      ipSetId: ""
+      ipSetName: "autoblock-blacklist"
+      scope: "REGIONAL"
+      region: "us-east-1"
+      # IAM role via serviceAccount.annotations is preferred over explicit keys
+      accessKeyId: ""        # use existingSecret instead
+      secretAccessKey: ""
+
+    cloudflare:
+      enabled: false
+      accountId: ""
+      listId: ""
+      apiToken: ""           # use existingSecret instead
+
+    nginx:
+      enabled: false
+      banFilePath: "/etc/nginx/autoblock-ban.conf"
+      reloadCommand: "nginx -s reload"
+
+## Notifications
+notifications:
+  slack:
+    enabled: false
+    webhookUrl: ""           # use existingSecret instead
+    channel: "#security-alerts"
+    maxPerMinute: 5
+
+  pagerduty:
+    enabled: false
+    integrationKey: ""       # use existingSecret instead
+
+## Metrics
+metrics:
+  enabled: true
+  port: 9090
+  path: /metrics
+  serviceMonitor:
+    enabled: false           # requires Prometheus Operator
+    namespace: ""
+    interval: 30s
+    labels: {}
+
+## Pod settings
+podAnnotations: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  fsGroup: 65534
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+## Service account (for AWS IAM role via IRSA)
+serviceAccount:
+  create: true
+  annotations: {}
+  # aws irsa:
+  # annotations:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/autoblock-waf
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

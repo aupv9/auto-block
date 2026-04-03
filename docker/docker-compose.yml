@@ -1,0 +1,107 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: autoblock-redis
+    command: >
+      redis-server
+      --notify-keyspace-events KEA
+      --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  engine:
+    build:
+      context: ../engine
+      dockerfile: Dockerfile
+      target: engine
+    container_name: autoblock-engine
+    environment:
+      AUTOBLOCK_REDIS_URL: redis://redis:6379
+      AUTOBLOCK_TENANT: ${AUTOBLOCK_TENANT:-default}
+      AUTOBLOCK_REMEDIATION_WATCHER_MODE: pubsub
+      AUTOBLOCK_REMEDIATION_DEBOUNCE_SECONDS: 3
+      AUTOBLOCK_REMEDIATION_MIN_SCORE_FOR_WAF: 15
+      AUTOBLOCK_NOTIFICATIONS_SLACK_ENABLED: ${SLACK_ENABLED:-false}
+      AUTOBLOCK_NOTIFICATIONS_SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      AUTOBLOCK_NOTIFICATIONS_SLACK_CHANNEL: ${SLACK_CHANNEL:-#security-alerts}
+      # AWS credentials (use IAM role in production)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../engine
+      dockerfile: Dockerfile
+      target: api
+    container_name: autoblock-api
+    environment:
+      AUTOBLOCK_REDIS_URL: redis://redis:6379
+      AUTOBLOCK_TENANT: ${AUTOBLOCK_TENANT:-default}
+      AUTOBLOCK_API_LISTEN: :8080
+      AUTOBLOCK_API_AUTH_ENABLED: "true"
+      AUTOBLOCK_API_AUTH_KEYS_0_KEY: ${API_KEY_ADMIN:-changeme-admin}
+      AUTOBLOCK_API_AUTH_KEYS_0_ROLE: admin
+      AUTOBLOCK_METRICS_PROMETHEUS_ENABLED: "true"
+      AUTOBLOCK_METRICS_PROMETHEUS_LISTEN: :9090
+    ports:
+      - "8080:8080"   # management API
+      - "9090:9090"   # metrics
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v1/status/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    container_name: autoblock-prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9091:9090"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: autoblock-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/autoblock-overview.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  prometheus-data:
+  grafana-data:

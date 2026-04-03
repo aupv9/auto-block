@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # create GitHub Release
+  id-token: write   # npm provenance + PyPI trusted publishing
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # 1. Create GitHub Release with CHANGELOG notes
+  # ─────────────────────────────────────────────────────────────────────────
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract CHANGELOG section for this release
+        id: notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Grab lines between ## [VERSION] and next ## heading
+          NOTES=$(awk "/^## \[${VERSION}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
+          echo "RELEASE_NOTES<<EOF" >> "$GITHUB_ENV"
+          echo "$NOTES" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "AutoBlock ${{ github.ref_name }}"
+          body: ${{ env.RELEASE_NOTES }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 2. Publish @autoblock/core and @autoblock/express to npm
+  # ─────────────────────────────────────────────────────────────────────────
+  publish-npm:
+    name: Publish npm packages
+    needs: github-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter "@autoblock/*" build
+
+      - name: Publish @autoblock/core
+        run: pnpm --filter @autoblock/core publish --no-git-checks --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @autoblock/express
+        run: pnpm --filter @autoblock/express publish --no-git-checks --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 3. Publish autoblock to PyPI
+  # ─────────────────────────────────────────────────────────────────────────
+  publish-pypi:
+    name: Publish to PyPI
+    needs: github-release
+    runs-on: ubuntu-latest
+    environment: pypi   # requires trusted publisher configured on PyPI
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tools
+        run: pip install hatch
+
+      - name: Build sdist + wheel
+        working-directory: packages/fastapi
+        run: hatch build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/fastapi/dist/
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 4. Publish autoblock-spring-boot-starter to Maven Central (Sonatype)
+  # ─────────────────────────────────────────────────────────────────────────
+  publish-maven:
+    name: Publish to Maven Central
+    needs: github-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - name: Set release version
+        working-directory: packages/spring
+        run: |
+          VERSION="${{ needs.github-release.outputs.version }}"
+          mvn versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false
+
+      - name: Deploy to Maven Central
+        working-directory: packages/spring
+        run: mvn --batch-mode deploy -P release -DskipTests
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 5. Publish autoblock-go module (tag is sufficient — Go modules use VCS)
+  # ─────────────────────────────────────────────────────────────────────────
+  verify-go:
+    name: Verify Go SDK at tag
+    needs: github-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: packages/go/go.sum
+
+      - name: Build & test
+        working-directory: packages/go
+        run: go build ./... && go vet ./...

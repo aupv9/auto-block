@@ -1,0 +1,16 @@
+apiVersion: v2
+name: autoblock
+description: Adaptive multi-layer rate limiting & auto-remediation engine
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - rate-limiting
+  - waf
+  - security
+  - ddos-protection
+home: https://github.com/autoblock/autoblock
+sources:
+  - https://github.com/autoblock/autoblock
+maintainers:
+  - name: AutoBlock Contributors

@@ -1,0 +1,280 @@
+openapi: "3.1.0"
+info:
+  title: AutoBlock Management API
+  version: "0.1.0"
+  description: |
+    Management REST API for the AutoBlock adaptive rate limiting & auto-remediation engine.
+    All endpoints (except /healthz) require Bearer token authentication.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:   { type: string }
+        message: { type: string }
+
+    BlacklistEntry:
+      type: object
+      properties:
+        ip:        { type: string, example: "1.2.3.4" }
+        permanent: { type: boolean }
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    IPStatus:
+      type: object
+      properties:
+        ip:    { type: string }
+        score: { type: integer, description: "Current penalty score" }
+        state:
+          type: string
+          enum: [CLEAN, WARN, SLOW, BLOCK, BLACKLIST]
+        blacklisted: { type: boolean }
+        whitelisted: { type: boolean }
+
+    Rule:
+      type: object
+      required: [id, path, limit, window_seconds]
+      properties:
+        id:             { type: string, example: "login-limit" }
+        path:           { type: string, example: "/api/auth/login" }
+        limit:          { type: integer, minimum: 1, example: 10 }
+        window_seconds: { type: integer, minimum: 1, example: 60 }
+        algorithm:
+          type: string
+          enum: [sliding_window, token_bucket, hybrid]
+          default: hybrid
+        per_user:    { type: boolean, default: false }
+        per_endpoint: { type: boolean, default: false }
+        enabled:     { type: boolean, default: true }
+        created_at:  { type: string, format: date-time, readOnly: true }
+        updated_at:  { type: string, format: date-time, readOnly: true }
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  # ── IP Status ─────────────────────────────────────────────────────────────
+  /api/v1/status/ip/{ip}:
+    get:
+      summary: Get penalty state for an IP
+      parameters:
+        - name: ip
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: IP status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IPStatus" }
+        "401": { description: Unauthorized }
+
+  # ── Blacklist ──────────────────────────────────────────────────────────────
+  /api/v1/blacklist/ip:
+    get:
+      summary: List all blacklisted IPs
+      responses:
+        "200":
+          description: Blacklist entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items: { $ref: "#/components/schemas/BlacklistEntry" }
+                  count: { type: integer }
+        "401": { description: Unauthorized }
+
+    post:
+      summary: Manually add an IP to the blacklist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ip]
+              properties:
+                ip:  { type: string, example: "1.2.3.4" }
+                ttl: { type: integer, description: "Seconds; 0 = permanent", example: 3600 }
+      responses:
+        "201": { description: IP added }
+        "400": { description: Bad request }
+        "401": { description: Unauthorized }
+
+  /api/v1/blacklist/ip/{ip}:
+    get:
+      summary: Check if a specific IP is blacklisted
+      parameters:
+        - name: ip
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlacklistEntry" }
+        "404": { description: IP not in blacklist }
+        "401": { description: Unauthorized }
+
+    delete:
+      summary: Remove an IP from the blacklist
+      parameters:
+        - name: ip
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Removed }
+        "401": { description: Unauthorized }
+
+  # ── Whitelist ──────────────────────────────────────────────────────────────
+  /api/v1/whitelist/ip:
+    get:
+      summary: List all whitelisted IPs
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ips:   { type: array, items: { type: string } }
+                  count: { type: integer }
+        "401": { description: Unauthorized }
+
+    post:
+      summary: Add an IP to the whitelist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ip]
+              properties:
+                ip: { type: string, example: "10.0.0.1" }
+      responses:
+        "201": { description: IP added }
+        "400": { description: Bad request }
+        "401": { description: Unauthorized }
+
+  /api/v1/whitelist/ip/{ip}:
+    delete:
+      summary: Remove an IP from the whitelist
+      parameters:
+        - name: ip
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Removed }
+        "401": { description: Unauthorized }
+
+  # ── Dynamic Rules ──────────────────────────────────────────────────────────
+  /api/v1/rules:
+    get:
+      summary: List all dynamic rate-limit rules
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rules: { type: array, items: { $ref: "#/components/schemas/Rule" } }
+                  count: { type: integer }
+        "401": { description: Unauthorized }
+
+    post:
+      summary: Create a new dynamic rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Rule" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Rule" }
+        "400": { description: Bad request }
+        "401": { description: Unauthorized }
+
+  /api/v1/rules/{id}:
+    get:
+      summary: Get a rule by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Rule" }
+        "404": { description: Not found }
+        "401": { description: Unauthorized }
+
+    put:
+      summary: Replace a rule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Rule" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Rule" }
+        "404": { description: Not found }
+        "401": { description: Unauthorized }
+
+    delete:
+      summary: Delete a rule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Unauthorized }

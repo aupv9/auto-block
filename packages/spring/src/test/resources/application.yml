@@ -1,0 +1,16 @@
+spring:
+  threads:
+    virtual:
+      enabled: true   # virtual threads — safe for Thread.sleep in SLOW state
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+# AutoBlock is auto-configured — override defaults here during tests
+autoblock:
+  enabled: true
+  tenant: test
+  fail-open: true
+  trust-proxy: true
+  trust-proxy-depth: 1

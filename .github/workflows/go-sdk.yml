@@ -1,0 +1,48 @@
+name: Go SDK
+
+on:
+  push:
+    paths:
+      - "packages/go/**"
+      - ".github/workflows/go-sdk.yml"
+  pull_request:
+    paths:
+      - "packages/go/**"
+
+jobs:
+  test:
+    name: Test (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: ["1.22", "1.23"]
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: packages/go
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: packages/go/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -v -race -count=1 ./...
+        env:
+          REDIS_URL: redis://localhost:6379

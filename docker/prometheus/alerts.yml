@@ -1,0 +1,38 @@
+groups:
+  - name: autoblock
+    rules:
+      - alert: HighBlacklistRate
+        expr: rate(autoblock_blacklist_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High IP blacklist rate ({{ $value }}/s)"
+          description: "More than 10 IPs/s being blacklisted — possible DDoS or misconfiguration."
+
+      - alert: WAFPushFailing
+        expr: rate(autoblock_waf_action_errors_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "WAF push failures detected"
+          description: "AutoBlock engine is failing to push blocked IPs to WAF provider."
+
+      - alert: WAFLatencyHigh
+        expr: histogram_quantile(0.95, rate(autoblock_waf_action_latency_seconds_bucket[5m])) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WAF push latency p95 > 30s (SLO: 60s)"
+          description: "WAF push is taking longer than expected. 60s SLO is at risk."
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is unreachable"
+          description: "AutoBlock depends on Redis — all rate limiting is currently fail-open."

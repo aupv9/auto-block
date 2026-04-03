@@ -1,0 +1,83 @@
+name: Python SDK
+
+on:
+  push:
+    paths:
+      - "packages/fastapi/**"
+      - ".github/workflows/python.yml"
+  pull_request:
+    paths:
+      - "packages/fastapi/**"
+
+jobs:
+  test:
+    name: Test (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: packages/fastapi
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: |
+          pip install ruff mypy
+          ruff check autoblock/
+          mypy autoblock/ --ignore-missing-imports
+
+      - name: Test
+        run: pytest tests/ -v --tb=short
+        env:
+          REDIS_URL: redis://localhost:6379
+
+  publish:
+    name: Publish to PyPI
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    defaults:
+      run:
+        working-directory: packages/fastapi
+    permissions:
+      contents: read
+      id-token: write   # for PyPI trusted publishing
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build
+        run: |
+          pip install build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/fastapi/dist/

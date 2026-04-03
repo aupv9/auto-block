@@ -1,0 +1,17 @@
+{
+  "name": "autoblock",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Adaptive multi-layer rate limiting & auto-remediation engine",
+  "packageManager": "pnpm@9.0.0",
+  "engines": { "node": ">=20.0.0", "pnpm": ">=9.0.0" },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "clean": "pnpm -r clean"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

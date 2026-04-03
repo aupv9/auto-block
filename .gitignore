@@ -1,0 +1,74 @@
+# ── Node / TypeScript ────────────────────────────────────────────────────────
+node_modules/
+dist/
+.pnpm-store/
+*.tsbuildinfo
+.turbo/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+*.egg-info/
+dist/
+build/
+.hatch/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# ── Java / Maven ──────────────────────────────────────────────────────────────
+target/
+*.class
+*.jar
+*.war
+.mvn/wrapper/maven-wrapper.jar
+!.mvn/wrapper/maven-wrapper.properties
+
+# ── Go ────────────────────────────────────────────────────────────────────────
+packages/go/autoblock
+engine/autoblock-engine
+api/autoblock-api
+*.test
+
+# ── Secrets & environment ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+docker/data/
+docker/logs/
+
+# ── Editors & OS ──────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Test & coverage artefacts ─────────────────────────────────────────────────
+coverage/
+.nyc_output/
+htmlcov/
+*.lcov
+junit*.xml
+test-results/
+
+# ── Helm ──────────────────────────────────────────────────────────────────────
+deploy/helm/autoblock/charts/
+deploy/helm/autoblock/*.tgz
+
+# ── k6 output ─────────────────────────────────────────────────────────────────
+tests/e2e/k6/results/
